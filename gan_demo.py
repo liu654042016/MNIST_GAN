@@ -1,3 +1,4 @@
+import enum
 from logging import critical
 from random import shuffle
 from turtle import forward
@@ -31,10 +32,10 @@ mnist = datasets.MNIST(
     root = '', train=True, transform=img_transform, download=True
 )
 #数据集加载
-dataloader = torch.utils.data.DataLoader(datasets=mnist, batch_size = batch_size, shuffle = True)
+dataloader = torch.utils.data.DataLoader(dataset=mnist, batch_size = batch_size, shuffle = True)
 
 #判别网络
-class discriminator(nn.Model):
+class discriminator(nn.Module):
     def __init__(self) -> None:
         super(discriminator, self).__init__()
         self.dis = nn.Sequential(nn.Linear(784, 256),
@@ -43,13 +44,13 @@ class discriminator(nn.Model):
                                 nn.LeakyReLU(0.2),
                                 nn.Linear(256, 1),
                                 nn.Sigmoid())
-        def forward(self, x):
+    def forward(self, x):
             x = self.dis(x)
             return x
 
 
 #生成器
-class generator(nn.Model):
+class generator(nn.Module):
     def __init__(self) -> None:
         super(generator, self).__init__()
         self.gen = nn.Sequential(
@@ -81,3 +82,60 @@ g_optimizer = torch.optim.Adam(G.parameters(), lr = 0.0003)
 
 #开始训练
 for epoch in range(num_epoch):
+    for i, (img, _) in enumerate(dataloader):
+        num_img = img.size(0)
+        #**********************训练判别器
+        img = img.view(num_img, -1)#将图片展开28*28
+        real_img = Variable(img)
+        real_label = Variable(torch.ones(num_img))#定义真实label为1
+        fake_label = Variable(torch.zeros(num_img))#定义假label为0
+        #print(fake_label.shape)
+
+        #计算real_img 的损失
+        real_out = D(real_img)#将真实图片放入判别器
+        real_out = real_out.squeeze()#去掉维度为1的 torch.size()
+        #print(real_out.shape)
+        d_loss_real = criterion(real_out, real_label)#得到真实图片的Loss
+        real_scores = real_out #越接近越好
+
+        #计算fake_img 的损失
+        z = Variable(torch.randn(num_img, z_dimension))#随机生成一些噪声
+        fake_img = G(z) #放入生成网络生成一张假的照片
+        fake_out = D(fake_img)#判别器判断假的图片
+        fake_out = fake_out.squeeze()
+        d_loss_fake = criterion(fake_out, fake_label)
+        fake_scores = fake_out#越接近越好   
+
+        #反向传播和优化
+        d_loss = d_loss_fake + d_loss_real #将真假图片loss加起来
+        d_optimizer.zero_grad()#每次梯度归零
+        d_loss.backward()#反向传播
+        d_optimizer.step()#更新参数
+
+        #****************************训练生成器
+        #计算fake_img 的损失
+        #z = Variable(torch.randn(num_img, z_dimension)).cuda() #得到随机噪声
+        z = Variable(torch.randn(num_img, z_dimension)) #得到随机噪声
+        fake_img = G(z)#生成假的图片
+        output = D(fake_img)#经过判别器得到的结果
+        output = output.squeeze()
+        g_loss = criterion(output, real_label)#得到假的图片和真的图片的loss
+
+        #反向传播和优化
+        g_optimizer.zero_grad()
+        g_loss.backward()
+        g_optimizer.step()
+
+        if(i+1)%100 == 0:
+            print('epoch %d[{}/{}], d_loss:{:,.6f}, g_loss:{:,.6f}, D real:{:,.6f}, D fake:{:,.6f}'.format(epoch, num_epoch, d_loss.item(), g_loss.item(),real_scores.data.mean(), fake_scores.data.mean()))
+
+    if epoch ==0:
+        real_images = to_img(real_img.cpu().data)
+        save_image(real_images, 'real_images.png')
+    
+    fake_images = to_img(fake_img.cpu().data)
+    save_image(fake_images, 'fake_imgs--{}.png'.format(epoch+1))
+
+torch.save(G.state_dict(), 'generator.pth')
+torch.save(D.state_dict(),'discriminator.pth')
+
